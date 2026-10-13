@@ -37,7 +37,8 @@ https://github.com/user-attachments/assets/e2771c68-a28c-4459-ac5a-a5b685181eeb
 | 语言 | 中文或英文（`src/config.ts` 的 `lang`）；排版、字幕长度预算、配音默认值随它切换 |
 | 视觉 | 黑底，幕底二选一：点阵波（默认，移植自 video-talkcraft 的 dot-field-wave），或星点 + 雾底渐变（`src/config.ts` 的 `bg`）；白线条图形 + 紫色重点；超粗黑体大字 |
 | 常驻层 | 44px 白字黑边字幕、底部章节进度条、顶部胶囊 HUD、可选流程轨、片尾署名 `built by Anything2Explainer skill`（`config.builtBy`，设为 `''` 去掉） |
-| 配音 | 中文 edge-tts `zh-CN-YunxiNeural`（云希，男声，原速不加速 ≈5.5 字/秒）/ 英文 kokoro-82m `am_liam`（Liam，男声）；也可用你自己的 TTS 或成品配音 |
+| 配音 | 中文 Windows SAPI 离线云希 `Microsoft Yunxi (Natural)`（男声，原速 ≈5.7 字/秒，完全离线）/ 英文 kokoro-82m `am_liam`（Liam，男声）；在线 edge 可用 `A2E_ZH_ENGINE=edge` 切回；也可用你自己的 TTS 或成品配音 |
+| 配乐 | 可选：`scripts/mix_bgm.py` 把 `assets/bgm_*.mp3` 混入成片（视频流 copy，全程统一音量：BGM 固定比配音低 `BGM_DB` dB，默认 -18；片型预设 `PRESET=normal/sleep/fast`；配音响度统一 `VOICE_LUFS=-16` 双遍 loudnorm），输出 `..._bgm.mp4` |
 
 时长决定内容丰富程度与全流程规模：
 
@@ -137,7 +138,7 @@ cd ~/work/my-video
 
 1. **时长与语言**：写文案之前。时长决定句数、镜头数和并行 agent 数，也就决定内容能铺多丰富；语言决定 `src/config.ts` 的 `lang`，进而影响排版、字幕预算和默认音色。
 2. **解说词定稿**：配音之前。定稿后帧号会被每个镜头硬编码，改一个字全片重对位，这是最便宜的干预点。
-3. **配音**：跑 TTS 之前问一句你有没有偏好的 TTS；没有就用默认（中文 edge-tts 云希、英文 kokoro-82m Liam）。也可以直接给成品配音，自己按逐句时间轴填 `timeline.ts`。
+3. **配音**：跑 TTS 之前问一句你有没有偏好的 TTS；没有就用默认（中文 Windows SAPI 离线云希、英文 kokoro-82m Liam）。也可以直接给成品配音，自己按逐句时间轴填 `timeline.ts`。
 4. **前 30 秒样片**：只建完第一个构建组就渲 30 秒给你看风格。在这里改一次是 1 个组的成本，整片渲完再改是全部组。
 
 ## 和其他工具的区别

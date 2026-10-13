@@ -6,8 +6,13 @@ import {fitSize} from './textfit';
 import {TOTAL_FRAMES, CHAPTER_STARTS, SENTENCES} from './timeline';
 
 /**
- * 底部章节进度条（半透明条体 y687–720、填充右缘 x=1280·N/TOTAL、n−1 根分隔线、章节名粗黑斜体 24px），来源于一条 MG 科普原片的实测模型（半透明条体 y687–720、填充右缘 x=1280·N/TOTAL、3 根分隔线、4 个章节名粗黑斜体 24px），
- * 章节切换帧来自 timeline.ts（tts_build.py 自动生成），当前章高亮保持到片尾。章名 ≤6 字为宜。
+ * 底部章节进度条（半透明条体 y687–720、n−1 根等宽分隔线、章节名粗黑斜体 24px）。
+ * 章节切换帧来自 timeline.ts（tts_build.py 自动生成）。
+ *
+ * ⚠ 填充必须**分段线性**：分隔线是等宽（1280/NCH），但各章帧长不等——
+ *   若填充按总帧数线性推进（旧实现 1280*N/TOTAL），填充跨过分隔线的时刻
+ *   会与本章真正开始的时刻错位（章越长错得越多）。现在填充在每段内按该章
+ *   真实帧长推进，跨分隔线的时刻 == 该章开始帧，与高亮一致。
  */
 export const PROGRESS_ALPHA = 0.52;
 export const FILL_RGBA = 'rgba(190,170,250,0.52)';
@@ -15,6 +20,7 @@ export const TRACK_RGBA = 'rgba(243,243,243,0.32)';
 export const BAR_TOP = 687;
 export const BAR_H = 720 - BAR_TOP;
 const NCH = Math.max(1, CHAPTER_STARTS.length);
+const SEG_W = 1280 / NCH;
 export const DIVIDERS = Array.from({length: NCH - 1}, (_, i) => Math.round(((i + 1) * 1280) / NCH)); // n 章等宽分隔
 export const DIVIDER_W = 4;
 const CENTERS = Array.from({length: NCH}, (_, i) => Math.round(((i + 0.5) * 1280) / NCH));
@@ -39,10 +45,25 @@ export const currentChapter = (N: number) => {
   return idx; // 片头（第一章开始前）无高亮
 };
 
+/** 章节边界帧：b[0]=1，b[i]=第 i 章（i≥1）的切换帧，b[NCH]=TOTAL+1。 */
+export const CHAPTER_BOUNDS: number[] = [1, ...CHAPTERS.slice(1).map((c) => c.from), TOTAL_FRAMES + 1];
+
+/** 分段线性填充宽度：每章占等宽 SEG_W，段内按该章真实帧长推进，跨分隔线 == 该章开始帧。 */
+export const fillWidth = (N: number): number => {
+  const n = Math.max(1, Math.min(TOTAL_FRAMES, N));
+  let i = NCH - 1;
+  for (let k = 0; k < NCH; k++) {
+    if (n >= CHAPTER_BOUNDS[k] && n < CHAPTER_BOUNDS[k + 1]) { i = k; break; }
+  }
+  const span = Math.max(1, CHAPTER_BOUNDS[i + 1] - CHAPTER_BOUNDS[i]);
+  const t = Math.max(0, Math.min(1, (n - CHAPTER_BOUNDS[i]) / span));
+  return (i + t) * SEG_W;
+};
+
 export const ProgressBar: React.FC<{dimKf?: Array<[number, number]>; frame?: number}> = ({dimKf = [], frame}) => {
   const cur = useCurrentFrame();
   const N = frame ?? cur + 1;
-  const fillW = (1280 * N) / TOTAL_FRAMES;
+  const fillW = fillWidth(N);
   const dim = dimKf.length ? kf(N, dimKf) : 1;
   const ch = currentChapter(N);
   return (

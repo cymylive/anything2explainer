@@ -37,7 +37,8 @@ Both cuts share one storyboard and 44 shots; the English cut re-times every shot
 | Language | Chinese or English (`lang` in `src/config.ts`); typography, subtitle budgets and TTS switch with it |
 | Look | black canvas with one of two backdrops, star field + fog gradient or dot-field wave (`bg` in `src/config.ts`; the dot-field wave is ported from video-talkcraft); white line art + purple accents; ultra-bold headline type |
 | Persistent layers | 44px white-on-black-stroke subtitles, bottom chapter progress bar, top capsule HUD, optional pipeline rail, `built by Anything2Explainer skill` end credit (`builtBy`, set to `''` to drop) |
-| Voiceover | Chinese: edge-tts `zh-CN-YunxiNeural` (Yunxi, male, unmodified rate ≈5.5 chars/s). English: kokoro-82m `am_liam` (Liam, male). Or bring your own TTS / finished audio |
+| Voiceover | Chinese: Windows SAPI offline `Microsoft Yunxi (Natural)` (Yunxi, male, unmodified rate ≈5.7 chars/s, fully offline). English: kokoro-82m `am_liam` (Liam, male). Online edge available via `A2E_ZH_ENGINE=edge`. Or bring your own TTS / finished audio |
+| Music | Optional: `scripts/mix_bgm.py` mixes `assets/bgm_*.mp3` into the film (video stream copied; uniform level throughout — BGM fixed `BGM_DB` dB below the voiceover, default -18; presets `PRESET=normal/sleep/fast`; voiceover leveling `VOICE_LUFS=-16` two-pass loudnorm), outputs `..._bgm.mp4` |
 
 Length drives how much ground the film covers, and the size of the whole pipeline:
 
@@ -137,7 +138,7 @@ The run stops and waits for you at exactly four points instead of ploughing thro
 
 1. **Length and language**: before the script is written. Length decides the line count, shot count and how many agents run in parallel, i.e. how much the film can actually cover; language flips `lang` in `src/config.ts`, which drives typography, subtitle budgets and the default voice.
 2. **Narration sign-off**: before voiceover. Once locked, frame numbers are hard-coded into every shot; changing one word re-times the whole film. This is the cheapest place to intervene.
-3. **Voiceover**: before TTS runs you get asked whether you have a preferred engine. If not, defaults apply (edge-tts Yunxi for Chinese, kokoro-82m Liam for English). You can also hand over finished audio and fill the per-line timeline yourself.
+3. **Voiceover**: before TTS runs you get asked whether you have a preferred engine. If not, defaults apply (Windows SAPI offline Yunxi for Chinese, kokoro-82m Liam for English). You can also hand over finished audio and fill the per-line timeline yourself.
 4. **First 30 seconds**: only the first build group is done, then 30 seconds get rendered for you to judge the look. Fixing the style here costs one group; after the full render it costs every group.
 
 ## How it compares

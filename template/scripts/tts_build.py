@@ -24,6 +24,9 @@ TTS 引擎（`TTS_ENGINE`，默认 `auto` = 按解说词语言选；**跑之前�
               一个 .onnx 语音，路径经 PIPER_MODEL 传入；无词边界，同 kokoro 逐块合成。装得最快，音色一般。
   kokoro_onnx Linux/ARM 本地配音，音色自然。onnxruntime 版 kokoro，无 torch/spacy（比 `kokoro` 引擎好装）。
               `pip install kokoro-onnx` + 模型 KOKORO_ONNX_MODEL / 声音库 KOKORO_ONNX_VOICES；KOKORO_ONNX_VOICE 默认 am_michael。
+  sapi      Windows 本地 SAPI（云希离线，中文默认走这个）。`pip install pywin32`；从已装 SAPI 语音里挑含
+            SAPI_VOICE（默认 Yunxi）且非 Online 的描述，SAPI_RATE -10..10（0 原速）控制语速。无词边界 → 逐块合成。
+            想回在线 edge 就设 A2E_ZH_ENGINE=edge（只影响 auto 模式中文）。
   读音覆写表 PRONOUNCE（见下）只作用于 `kokoro` 引擎（misaki 的 [词](/音标/) 语法）；piper / kokoro_onnx 不认这个语法，
   缩写读错时改写解说词或换引擎。
   用户有别的 TTS 偏好时不走本脚本：让他给成品配音 wav，按逐句/逐块时间轴手填 timeline.ts 与 subs.ts。
@@ -56,6 +59,11 @@ KOKORO_ONNX_VOICES = os.environ.get('KOKORO_ONNX_VOICES', '')  # 例：voices-v1
 KOKORO_ONNX_VOICE = os.environ.get('KOKORO_ONNX_VOICE', 'am_michael')
 KOKORO_ONNX_LANG = os.environ.get('KOKORO_ONNX_LANG', 'en-us')
 CHUNK_PAD = float(os.environ.get('CHUNK_PAD', 0.06))  # 无词边界引擎：块间静音秒
+# sapi（TTS_ENGINE=sapi）：用 Windows SAPI 调本地微软自然语音（如云希离线）。
+# SAPI_VOICE 是语音描述里的关键字（用于从已安装语音中挑选），默认 Yunxi 且优先本地非 Online 版。
+SAPI_VOICE = os.environ.get('SAPI_VOICE', 'Yunxi')
+SAPI_PREFER_LOCAL = os.environ.get('SAPI_PREFER_LOCAL', '1') != '0'
+SAPI_RATE = int(os.environ.get('SAPI_RATE', 0))   # SAPI 语速 -10..10，0 原速，负数更慢
 
 
 def _file_fp(path):
@@ -86,8 +94,8 @@ TAIL = int(os.environ.get('TAIL', 90))        # 片尾静音帧
 SHORT_TAIL = 45                               # 段末句的末块短于此帧数就要补停留（22 帧入场 + 8 帧离场后停不满 30 帧）；段内句不判
 CACHE = f'{ROOT}/audio/cache'
 os.makedirs(CACHE, exist_ok=True)
-if ENGINE not in ('auto', 'edge', 'kokoro', 'piper', 'kokoro_onnx'):
-    raise SystemExit(f'未知 TTS_ENGINE={ENGINE}（可选 auto / edge / kokoro / piper / kokoro_onnx）')
+if ENGINE not in ('auto', 'edge', 'kokoro', 'piper', 'kokoro_onnx', 'sapi'):
+    raise SystemExit(f'未知 TTS_ENGINE={ENGINE}（可选 auto / edge / kokoro / piper / kokoro_onnx / sapi）')
 
 
 def parse(path):
@@ -135,7 +143,7 @@ def parse(path):
 
 def cache_path(text, ext):
     # 本地模型引擎用文件指纹而不是文件名：不同目录下的同名 model.onnx、原地换掉的模型都要各自缓存
-    sig = f'{ENGINE}|{VOICE}|{RATE}|{KOKORO_VOICE}|{KOKORO_ONNX_VOICE}|{KOKORO_ONNX_LANG}|{KOKORO_ONNX_FP}|{PIPER_FP}|{KOKORO_LANG}|{KOKORO_SPEED}|{text}'
+    sig = f'{ENGINE}|{VOICE}|{RATE}|{SAPI_VOICE}|{SAPI_RATE}|{KOKORO_VOICE}|{KOKORO_ONNX_VOICE}|{KOKORO_ONNX_LANG}|{KOKORO_ONNX_FP}|{PIPER_FP}|{KOKORO_LANG}|{KOKORO_SPEED}|{text}'
     return f'{CACHE}/{hashlib.sha1(sig.encode()).hexdigest()[:16]}{ext}'
 
 
@@ -290,6 +298,57 @@ def synth_piper(text):
     return au
 
 
+_sapi = None
+
+
+def _sapi_pick_voice():
+    """从已装 SAPI 语音里挑一个：优先描述含 SAPI_VOICE 且非 Online（本地自然语音）。"""
+    import win32com.client
+    sp = win32com.client.Dispatch('SAPI.SpVoice')
+    voices = sp.GetVoices()
+    cands = []
+    for i in range(voices.Count):
+        v = voices.Item(i)
+        d = v.GetDescription()
+        if SAPI_VOICE.lower() in d.lower():
+            cands.append((d, v))
+    if not cands:
+        raise SystemExit(f'SAPI 里找不到含 "{SAPI_VOICE}" 的语音；已装见 win32com SAPI.SpVoice.GetVoices()')
+    # 优先本地（描述无 Online），其次第一个
+    if SAPI_PREFER_LOCAL:
+        for d, v in cands:
+            if 'Online' not in d:
+                return v, d
+    return cands[0][1], cands[0][0]
+
+
+def synth_sapi(text):
+    """Windows SAPI 本地自然语音（如云希离线）。逐句合成 wav（48k 单声道），无词边界 → 逐块合成。
+    用 win32com 驱动 SAPI.SpFileStream 直接写 wav。"""
+    global _sapi
+    au = cache_path(text, '.wav')
+    if os.path.exists(au):
+        return au
+    try:
+        import win32com.client
+    except ImportError:
+        raise SystemExit('TTS_ENGINE=sapi 需要 pywin32：pip install pywin32')
+    if _sapi is None:
+        sp = win32com.client.Dispatch('SAPI.SpVoice')
+        v, d = _sapi_pick_voice()
+        sp.Voice = v
+        sp.Rate = SAPI_RATE
+        _sapi = sp
+        print(f'  SAPI 语音: {d}  rate={SAPI_RATE}')
+    fs = win32com.client.Dispatch('SAPI.SpFileStream')
+    # 16 = SSFMCreateForWrite
+    fs.Open(au, 3)
+    _sapi.AudioOutputStream = fs
+    _sapi.Speak(text)
+    fs.Close()
+    return au
+
+
 _kokoro_onnx = None
 
 
@@ -376,7 +435,7 @@ async def synth_sentence(chunks, sep=''):
         x, lead_cut = trim_edges(decode(au))
         dur = len(x) / SR
         return x, chunk_starts(text, chunks, words, lead_cut, dur, sep), dur
-    chunk_synth = {'piper': synth_piper, 'kokoro_onnx': synth_kokoro_onnx}.get(ENGINE, synth_kokoro)
+    chunk_synth = {'piper': synth_piper, 'kokoro_onnx': synth_kokoro_onnx, 'sapi': synth_sapi}.get(ENGINE, synth_kokoro)
     pad = np.zeros(int(CHUNK_PAD * SR), dtype=np.float32)
     parts = []; starts = []; pos = 0.0
     for i, c in enumerate(chunks):
@@ -394,7 +453,9 @@ async def main(narr):
     items = parse(narr)
     lang = detect_lang(items)
     if ENGINE == 'auto':
-        ENGINE = 'edge' if lang == 'zh' else 'kokoro'
+        # 中文默认走 sapi（Windows 本地 SAPI，云希离线）；想用在线 edge 就设 A2E_ZH_ENGINE=edge
+        zh_engine = os.environ.get('A2E_ZH_ENGINE', 'sapi')
+        ENGINE = zh_engine if lang == 'zh' else 'kokoro'
         print(f'解说词语言 {lang} → TTS_ENGINE={ENGINE}（有偏好请显式传 TTS_ENGINE=…）')
     if lang != CFG_LANG:
         print(f"⚠ src/config.ts 的 lang: '{CFG_LANG}' 与解说词语言 {lang} 不一致——改过来，"
@@ -459,8 +520,8 @@ async def main(narr):
             print(f"    f{sb['from']} (≈{w:.0f}px{'，会折两行' if w > SUB_MAX_W * 1.3 else ''}) {sb['text']}")
     # 输出
     tl = {'fps': FPS, 'total_frames': total, 'engine': ENGINE,
-          'voice': {'edge': VOICE, 'piper': PIPER_VOICE_NAME, 'kokoro_onnx': KOKORO_ONNX_VOICE}.get(ENGINE, KOKORO_VOICE),
-          'rate': RATE if ENGINE == 'edge' else KOKORO_SPEED,
+          'voice': {'edge': VOICE, 'piper': PIPER_VOICE_NAME, 'kokoro_onnx': KOKORO_ONNX_VOICE, 'sapi': SAPI_VOICE}.get(ENGINE, KOKORO_VOICE),
+          'rate': RATE if ENGINE == 'edge' else (SAPI_RATE if ENGINE == 'sapi' else KOKORO_SPEED),
           'gap': GAP, 'para_gap': PARA_GAP, 'chapter_gap': CHAPTER_GAP, 'lead': LEAD, 'tail': TAIL,
           'lang': lang, 'chapters': chapters, 'sentences': sentences, 'chars': total_chars, 'words': total_words,
           'speech_sec': round(speech_sec, 2)}
